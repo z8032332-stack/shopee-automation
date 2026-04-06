@@ -1,7 +1,16 @@
+# TODO: 未完工，環境變數與邏輯待驗證
+# 卡關紀錄（2026-04-06）：
+#   - Playwright connect_over_cdp 在 Python 3.14 + Chrome 146 無法連線（已改 requests + browser_cookie3）
+#   - browser_cookie3 讀 Edge cookie 需要以系統管理員身分執行 CMD
+#   - 評論影片目前回傳 0 個（疑似 cookie 未正確帶入，或 API 需登入 session）
+#   - 字幕逐句顯示已改好（以句號切分，FFmpeg drawtext）
+#   - 標題疊字已移除
 # 蝦皮選品影片製作 - Home Computer Version
 # 讀取選品Excel → 抓評論影片 → Gemini篩(無人臉/無開箱) → 合併3支 → 加文案字幕 + BGM → 輸出
 
-import sys, io, asyncio, json, re, os, random, requests, time, tempfile, shutil, glob, subprocess
+import sys, io, json, re, os, random, requests, time, tempfile, shutil, glob, subprocess
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
 os.environ['PATH'] += os.pathsep + r'C:\ffmpeg\bin'
 os.environ['PATH'] += os.pathsep + r'C:\platform-tools'
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -18,11 +27,10 @@ import imageio_ffmpeg
 import numpy as np
 
 # ── 路徑設定 ──────────────────────────────────────────────────────────────────
-BASE_DIR   = r'C:\Users\user\Desktop\蝦皮自動化工具'
-EXCEL_PATH = r'C:\Users\user\Desktop\蝦皮素材\蝦皮關鍵字選品_2026年3-4月new.xlsx'
-OUTPUT_DIR = r'C:\Users\user\Desktop\蝦皮素材\蝦皮影片輸出'
-BGM_DIR    = r'C:\Users\user\Desktop\蝦皮素材\BGM音樂'
-FONT_PATH  = r'C:\Windows\Fonts\msjh.ttc'    # 微軟正黑體（支援繁體中文）
+EXCEL_PATH = os.getenv('EXCEL_PATH',    r'C:\Users\user\Desktop\蝦皮素材\蝦皮關鍵字選品_2026年3-4月new.xlsx')
+OUTPUT_DIR = os.getenv('VIDEO_DIR',     r'C:\Users\user\Desktop\蝦皮素材\蝦皮影片輸出')
+BGM_DIR    = os.getenv('BGM_DIR',       r'C:\Users\user\Desktop\蝦皮素材\BGM音樂')
+FONT_PATH  = os.getenv('FONT_PATH',     r'C:\Windows\Fonts\msjh.ttc')
 
 # ── 欄位對應（依照實際Excel）─────────────────────────────────────────────────
 COL_NAME   = 2   # B: 品名
@@ -39,11 +47,11 @@ VIDEO_W      = 1080
 VIDEO_H      = 1920
 
 # ── Gemini 設定 ───────────────────────────────────────────────────────────────
-GEMINI_KEY = 'AIzaSyBfhyW5K3TrNZHs5380tBQ2KjabCmXHtW'
+GEMINI_KEY = os.getenv('GEMINI_KEY', 'AIzaSyBfhyW5K3TrNZHs5380tBQ2KjabCmXHtW')
 genai.configure(api_key=GEMINI_KEY)
 gemini = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
-FFMPEG_EXE = r'C:\ffmpeg\bin\ffmpeg.exe'
+FFMPEG_EXE = os.getenv('FFMPEG_PATH', r'C:\ffmpeg\bin\ffmpeg.exe')
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 文字工具

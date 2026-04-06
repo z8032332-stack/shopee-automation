@@ -1,0 +1,35 @@
+# 影片與媒體檔
+output_final/
+output_videos/
+temp_videos/
+music/
+sites/
+*.mp4
+*.mp3
+*.wav
+
+# 截圖（debug 用）
+screenshots/
+
+# 個人資料與認證
+*.xlsx
+~$*.xlsx
+shopee_cookies.json
+config.json
+
+# Debug 暫存
+*.xml
+ui_dump*.xml
+uidump*.xml
+*.log
+*.apk
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# 其他
+.DS_Store
+Thumbs.db

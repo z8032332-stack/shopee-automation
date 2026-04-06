@@ -19,17 +19,17 @@ import numpy as np
 
 # ── 路徑設定 ──────────────────────────────────────────────────────────────────
 BASE_DIR   = r'C:\Users\user\Desktop\蝦皮自動化工具'
-EXCEL_PATH = os.path.join(BASE_DIR, r'選品Excel\蝦皮關鍵字選品_2026年3-4月.xlsx')
-OUTPUT_DIR = os.path.join(BASE_DIR, '影片輸出')
-BGM_DIR    = os.path.join(BASE_DIR, 'BGM音樂')
+EXCEL_PATH = r'C:\Users\user\Desktop\蝦皮素材\蝦皮關鍵字選品_2026年3-4月new.xlsx'
+OUTPUT_DIR = r'C:\Users\user\Desktop\蝦皮素材\蝦皮影片輸出'
+BGM_DIR    = r'C:\Users\user\Desktop\蝦皮素材\BGM音樂'
 FONT_PATH  = r'C:\Windows\Fonts\msjh.ttc'    # 微軟正黑體（支援繁體中文）
 
 # ── 欄位對應（依照實際Excel）─────────────────────────────────────────────────
-COL_NAME   = 1   # A: 品名
-COL_LINK   = 2   # B: 分潤連結
-COL_COPY   = 7   # G: 文案
-COL_TITLE  = 8   # H: 標題
-COL_STATUS = 9   # I: 狀態  ← 注意是第9欄
+COL_NAME   = 2   # B: 品名
+COL_LINK   = 3   # C: 分潤連結
+COL_COPY   = 8   # H: 文案
+COL_TITLE  = 9   # I: 標題
+COL_STATUS = 10  # J: 狀態
 
 # ── 影片參數 ──────────────────────────────────────────────────────────────────
 MIN_CLIPS    = 3    # 最少幾支影片才合併
@@ -40,7 +40,7 @@ VIDEO_H      = 1920
 
 # ── Gemini 設定 ───────────────────────────────────────────────────────────────
 GEMINI_KEY = 'AIzaSyBfhyW5K3TrNZHs5380tBQ2KjabCmXHtW'
-genai.configure(api_key=GEMINI_KEY, client_options={'api_version': 'v1'})
+genai.configure(api_key=GEMINI_KEY)
 gemini = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
 FFMPEG_EXE = r'C:\ffmpeg\bin\ffmpeg.exe'
@@ -442,7 +442,8 @@ async def process_product(page, row_data, row_idx):
     if not video_urls:
         return '無評論影片'
 
-    tmpdir = tempfile.mkdtemp()
+    tmpdir = os.path.join(OUTPUT_DIR, f'_clips_{row_idx:03d}')
+    os.makedirs(tmpdir, exist_ok=True)
     valid_clips = []
 
     try:
@@ -474,7 +475,7 @@ async def process_product(page, row_data, row_idx):
             return f'影片不足({len(valid_clips)}/{MIN_CLIPS})'
 
     finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
+        pass  # 原始片段保留在 _clips_XXX 資料夾，後製完成後可手動刪除
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

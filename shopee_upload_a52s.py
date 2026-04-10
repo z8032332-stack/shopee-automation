@@ -21,7 +21,7 @@
   ※ 沒有 config.json 則使用下方預設值（此電腦）
 """
 
-import os, sys, time, re, argparse, subprocess, json
+import os, sys, time, re, argparse, subprocess, json, glob
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
 
@@ -184,14 +184,19 @@ def push_video(local_path):
     time.sleep(1)
     adb(f"shell mkdir -p {PHONE_VIDEO_DIR}")
 
-    # 3. 推送新影片
+    # 3. 推送新影片（固定用 upload_temp.mp4 避免中文空格路徑問題）
     filename = os.path.basename(local_path)
-    remote = f"{PHONE_VIDEO_DIR}/{filename}"
+    remote = f"{PHONE_VIDEO_DIR}/upload_temp.mp4"
     print(f"  推送影片: {filename}")
-    adb(f"push \"{local_path}\" \"{remote}\"")
+    result = subprocess.run(
+        [ADB_PATH, "-s", DEVICE, "push", local_path, remote],
+        capture_output=True, timeout=120
+    )
+    push_out = (result.stdout + result.stderr).decode('utf-8', errors='replace')
+    print(f"  push 結果: {push_out.strip()}")
 
     # 4. touch 更新 mtime（強制 scanner 認定為新檔案）
-    adb(f"shell touch {remote}")
+    adb(f'shell touch "{remote}"')
     time.sleep(1)
 
     # 5. 確認檔案存在
@@ -202,20 +207,10 @@ def push_video(local_path):
     adb(f'shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d "file://{remote}"')
     time.sleep(2)
 
-    # 7. 等待 MediaStore 索引完成（最多 30 秒）
-    print("  等待 MediaStore 索引...", end='', flush=True)
-    filename_base = os.path.basename(remote)
-    for i in range(15):
-        result = adb('shell content query --uri content://media/external/video/media')
-        if filename_base in result:
-            print(f" ✓ ({(i+1)*2}秒)")
-            return remote
-        if i % 2 == 1:
-            adb(f'shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d "file://{remote}"')
-        print('.', end='', flush=True)
-        time.sleep(2)
-
-    print(" ⚠ 索引超時，繼續嘗試")
+    # 7. 等待媒體掃描完成（固定 5 秒）
+    print("  等待媒體掃描...", end='', flush=True)
+    time.sleep(5)
+    print(" ✓")
     return remote
 
 
@@ -285,6 +280,10 @@ def close_popup(d):
                 closed = True
                 break
         if not closed:
+            # 若不在 feed 頁（可能是全頁 promo），按返回鍵
+            if not d(text='推薦').exists(timeout=1):
+                adb("shell input keyevent KEYCODE_BACK")
+                time.sleep(2)
             break
     time.sleep(1)
 
@@ -867,9 +866,13 @@ def upload_one(row_data, dry_run=False):
     """上傳一部影片的完整流程"""
     idx = row_data['編號']
     excel_row = row_data['excel_row']  # Excel 行號，對應檔名
-    name = row_data['品名']
-    caption = row_data.get('關鍵字文案', '') or ''
-    video_path = os.path.join(VIDEO_DIR, f"row{excel_row:03d}_final.mp4")
+    caption = row_data.get('標題', '') or row_data.get('文案', '') or row_data.get('關鍵字文案', '') or ''
+    _matches = glob.glob(os.path.join(VIDEO_DIR, f"{excel_row:03d}_*.mp4"))
+    video_path = _matches[0] if _matches else os.path.join(VIDEO_DIR, f"{excel_row:03d}_final.mp4")
+    # 用影片檔名的品名做商品搜尋（避免 Excel 新增列後 row 號碼與品名錯位）
+    _fname = os.path.basename(video_path)
+    _m = re.match(r'^\d+_(.+?)\.mp4$', _fname, re.IGNORECASE)
+    name = _m.group(1).strip() if _m else row_data['品名']
 
     print(f"\n{'='*50}")
     print(f"📹 上傳第 {idx} 部: {name[:30]}...")
@@ -1006,8 +1009,9 @@ def main():
         for r in rows:
             if r['excel_row'] < args.start:
                 continue
-            video_path = os.path.join(VIDEO_DIR, f"row{r['excel_row']:03d}_final.mp4")
-            if os.path.exists(video_path) and r.get('關鍵字文案'):
+            _m = glob.glob(os.path.join(VIDEO_DIR, f"{r['excel_row']:03d}_*.mp4"))
+            video_path = _m[0] if _m else ""
+            if video_path and (r.get('標題') or r.get('文案') or r.get('關鍵字文案')):
                 targets.append(r)
             if len(targets) >= args.count:
                 break

@@ -115,11 +115,15 @@ def make_subtitle_clip(text, start_time, duration, font_size=52, bg_alpha=170):
     if not lines:
         return None
 
-    line_h  = font_size + 14
-    box_h   = line_h * len(lines) + margin
-    img     = Image.new('RGBA', (VIDEO_W, box_h), (0, 0, 0, 0))
-    draw    = ImageDraw.Draw(img)
-    draw.rectangle([0, 0, VIDEO_W, box_h], fill=(0, 0, 0, bg_alpha))
+    line_h    = font_size + 14
+    box_h     = line_h * len(lines) + margin
+    h_pad     = 24
+    max_text_w = int(max(dummy.textlength(line, font=font) for line in lines))
+    box_w     = min(max_text_w + h_pad * 2, VIDEO_W)
+    box_x     = (VIDEO_W - box_w) // 2
+    img       = Image.new('RGBA', (VIDEO_W, box_h), (0, 0, 0, 0))
+    draw      = ImageDraw.Draw(img)
+    draw.rectangle([box_x, 0, box_x + box_w, box_h], fill=(0, 0, 0, bg_alpha))
 
     for i, line in enumerate(lines):
         w = draw.textlength(line, font=font)

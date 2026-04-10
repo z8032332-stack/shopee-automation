@@ -6,6 +6,9 @@ import sys, io, os, re, json, time, random, shutil, tempfile, glob, subprocess, 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
+
 import cv2
 import warnings; warnings.filterwarnings('ignore')
 import numpy as np
@@ -19,21 +22,24 @@ logging.basicConfig(level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s', datefmt='%H:%M:%S')
 log = logging.getLogger(__name__)
 
-# ── 路徑設定 ──────────────────────────────────────────────────────────────────
-BASE_DIR      = r'C:\Users\user\Desktop\蝦皮自動化工具'
-EXCEL_PATH    = os.path.join(BASE_DIR, r'選品Excel\蝦皮關鍵字選品_2026年3-4月.xlsx')
-OUTPUT_DIR    = os.path.join(BASE_DIR, '影片輸出')
-BGM_DIR       = os.path.join(BASE_DIR, 'BGM音樂')
-COOKIES_FILE  = os.path.join(BASE_DIR, 'shopee_cookies.json')
-FONT_PATH     = r'C:\Windows\Fonts\msjh.ttc'
-FFMPEG_EXE    = imageio_ffmpeg.get_ffmpeg_exe()
+# ── 路徑設定（全部從 .env 讀，有預設值）──────────────────────────────────────
+EXCEL_PATH   = os.getenv('EXCEL_PATH',   r'C:\Users\user\Desktop\蝦皮自動化工具\選品Excel\蝦皮關鍵字選品_2026年3-4月.xlsx')
+OUTPUT_DIR   = os.getenv('OUTPUT_DIR',   r'C:\Users\user\Desktop\蝦皮自動化工具\影片輸出')
+BGM_DIR      = os.getenv('BGM_DIR',      r'C:\Users\user\Desktop\蝦皮自動化工具\BGM音樂')
+COOKIES_FILE = os.getenv('COOKIES_FILE', r'C:\Users\user\Desktop\蝦皮自動化工具\shopee_cookies.json')
+FONT_PATH    = os.getenv('FONT_PATH',    r'C:\Windows\Fonts\msjh.ttc')
+FFMPEG_EXE   = os.getenv('FFMPEG_PATH',  '') or imageio_ffmpeg.get_ffmpeg_exe()
 
-# ── Excel 欄位（依實際 Excel 確認）────────────────────────────────────────────
-COL_NAME   = 1   # A: 品名
-COL_LINK   = 2   # B: 分潤連結
-COL_COPY   = 7   # G: 文案
-COL_TITLE  = 8   # H: 標題
-COL_STATUS = 9   # I: 狀態
+# ── Excel 欄位（從 .env 讀，預設對應 蝦皮關鍵字選品 格式）─────────────────────
+# 欄位順序：A=編號 B=品名 C=分潤連結 D=價格 E=分潤率 F=銷量 G=對應關鍵字 H=文案 I=標題 J=狀態
+COL_NAME   = int(os.getenv('COL_NAME',   '2'))   # B: 品名
+COL_LINK   = int(os.getenv('COL_LINK',   '3'))   # C: 分潤連結
+COL_COPY   = int(os.getenv('COL_COPY',   '8'))   # H: 文案
+COL_TITLE  = int(os.getenv('COL_TITLE',  '9'))   # I: 標題
+COL_STATUS = int(os.getenv('COL_STATUS', '10'))  # J: 狀態
+
+# ── 從哪列開始（.env 設 START_ROW=22 就從第22筆繼續）──────────────────────────
+START_ROW = int(os.getenv('START_ROW', '1'))
 
 # ── 影片參數（沿用 original skill）────────────────────────────────────────────
 MIN_CLIPS        = 3    # 最少 3 支才合併
@@ -44,7 +50,7 @@ VIDEO_COLLECT_MAX = 15
 VIDEO_W, VIDEO_H = 1080, 1920
 
 # ── Gemini ────────────────────────────────────────────────────────────────────
-GEMINI_KEY = 'AIzaSyBfhyW5K3TrNZHs5380tBQ2KjabCmXHtW'
+GEMINI_KEY = os.getenv('GEMINI_KEY', 'AIzaSyBfhyW5K3TrNZHs5380tBQ2KjabCmXHtW')
 genai.configure(api_key=GEMINI_KEY)
 gemini = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
@@ -145,17 +151,23 @@ def parse_video_urls(data):
 
 def get_review_video_urls(driver, product_url):
     """navigate to product page + fetch ratings（沿用 original skill）"""
-    shopid, itemid = extract_ids(product_url)
-    if shopid is None: return [], 'no_ids'
+    # 先導覽到短網址，讓瀏覽器跟著跳轉到真實商品頁，再抓 shopid/itemid
+    log.info('Opening: %s', product_url)
+    driver.get(str(product_url))
+    time.sleep(6)
 
-    # 導到商品頁（undetected-chromedriver 不會被反 bot 擋）
-    dest = f'https://shopee.tw/product/{shopid}/{itemid}'
-    log.info('Opening: %s', dest)
-    driver.get(dest)
-    time.sleep(5)
+    final_url = driver.current_url
+    log.info('Resolved: %s', final_url)
 
-    if 'buyer/login' in driver.current_url:
+    if 'buyer/login' in final_url:
         return [], 'login_failed'
+    if 'error_page' in final_url or 'not-found' in final_url:
+        return [], 'expired_link'
+
+    shopid, itemid = extract_ids(final_url)
+    if shopid is None:
+        log.warning('無法從 %s 取得 ID', final_url)
+        return [], 'no_ids'
 
     driver.set_script_timeout(30)
     video_urls = []
@@ -298,7 +310,7 @@ def produce_video(clip_paths, title, copy_text, output_path):
     1. FFmpeg resize 每支到 1080x1920（沿用 original skill）
     2. moviepy 合併 + 疊標題/文案 + BGM
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         # Step 1: resize（沿用 original skill 的 FFmpeg 指令）
         resized = []
         for i, src in enumerate(clip_paths[:MIN_CLIPS]):
@@ -340,7 +352,10 @@ def produce_video(clip_paths, title, copy_text, output_path):
                 fps=30, logger=None,
                 ffmpeg_params=['-loglevel', 'error', '-preset', 'fast'])
             for c in clips: c.close()
-            merged.close(); final.close()
+            merged.close()
+            if bgm: bgm.close()
+            final.close()
+            import gc; gc.collect()
             return True
         except Exception as e:
             log.error('[produce] %s', e); return False
@@ -391,7 +406,9 @@ def main():
             row_idx     = row[0].row - 1
 
             if not name or not link: continue
-            if status_cell.value in ('影片完成', '無評論影片'):
+            if row_idx < START_ROW:
+                log.info('[skip %d] START_ROW=%d，跳過', row_idx, START_ROW); continue
+            if status_cell.value and (status_cell.value.startswith('clips_ok') or status_cell.value in ('無評論影片', 'no_videos', 'expired_link')):
                 log.info('[skip %d] %s', row_idx, str(name)[:25]); continue
 
             print(f'\n[{row_idx:3}/{total}] {str(name)[:45]}')
@@ -405,35 +422,42 @@ def main():
             if not video_urls:
                 status_cell.value = reason; wb.save(EXCEL_PATH); continue
 
-            # 下載 + Gemini 過濾
-            tmpdir = tempfile.mkdtemp()
+            # 下載 + Gemini 過濾 → 直接存到 _clips_XXX 資料夾（不後製）
+            clips_dir = os.path.join(OUTPUT_DIR, f'_clips_{row_idx:03d}')
+
+            # 如果已有 3 支以上就跳過重抓
+            existing = [f for f in os.listdir(clips_dir) if f.endswith('.mp4')] if os.path.exists(clips_dir) else []
+            if len(existing) >= MIN_CLIPS:
+                log.info('[skip %d] 已有 %d 支 clip，跳過', row_idx, len(existing))
+                status_cell.value = f'clips_ok({len(existing)})'; wb.save(EXCEL_PATH); continue
+
+            os.makedirs(clips_dir, exist_ok=True)
             valid_clips = []
-            try:
-                for i, url in enumerate(video_urls):
-                    if len(valid_clips) >= MIN_CLIPS: break
-                    dest = os.path.join(tmpdir, f'clip_{i:02d}.mp4')
-                    log.info('[%2d/%d] 下載...', i+1, len(video_urls))
-                    if not download_video(url, dest): continue
-                    log.info('  Gemini 檢查...')
-                    if is_valid_video(dest):
-                        valid_clips.append(dest)
-                        log.info('  V 通過 (%d/%d)', len(valid_clips), MIN_CLIPS)
-                    time.sleep(0.5)
-
-                log.info('有效: %d / 需要: %d', len(valid_clips), MIN_CLIPS)
-
-                if len(valid_clips) >= MIN_CLIPS:
-                    safe = re.sub(r'[\\/:*?"<>|]', '', str(name))[:35]
-                    out  = os.path.join(OUTPUT_DIR, f'{row_idx:03d}_{safe}.mp4')
-                    log.info('後製 → %s', os.path.basename(out))
-                    if produce_video(valid_clips, title, copy_text, out):
-                        status_cell.value = '影片完成'; done_count += 1
-                    else:
-                        status_cell.value = '合併失敗'
+            clip_idx = 0
+            for i, url in enumerate(video_urls):
+                if len(valid_clips) >= MIN_CLIPS: break
+                dest = os.path.join(clips_dir, f'clip_{clip_idx:02d}.mp4')
+                log.info('[%2d/%d] 下載...', i+1, len(video_urls))
+                if not download_video(url, dest): continue
+                log.info('  Gemini 檢查...')
+                if is_valid_video(dest):
+                    valid_clips.append(dest)
+                    clip_idx += 1
+                    log.info('  V 通過 (%d/%d)', len(valid_clips), MIN_CLIPS)
                 else:
-                    status_cell.value = f'影片不足({len(valid_clips)}/{MIN_CLIPS})'
-            finally:
-                shutil.rmtree(tmpdir, ignore_errors=True)
+                    os.remove(dest)  # 不通過就刪掉
+                time.sleep(0.5)
+
+            log.info('有效: %d / 需要: %d', len(valid_clips), MIN_CLIPS)
+
+            if len(valid_clips) >= MIN_CLIPS:
+                status_cell.value = f'clips_ok({len(valid_clips)})'
+                done_count += 1
+                log.info('clips 已存: %s', clips_dir)
+            else:
+                # 不夠就清掉資料夾
+                shutil.rmtree(clips_dir, ignore_errors=True)
+                status_cell.value = f'影片不足({len(valid_clips)}/{MIN_CLIPS})'
 
             wb.save(EXCEL_PATH)
             wait = random.uniform(8, 15)
@@ -441,8 +465,8 @@ def main():
             time.sleep(wait)
 
         print(f'\n{"="*55}')
-        print(f'完成！成功製作 {done_count} 個商品影片')
-        print(f'存放：{OUTPUT_DIR}')
+        print(f'完成！成功抓取 {done_count} 個商品 clips')
+        print(f'存放：{OUTPUT_DIR}/_clips_XXX/')
 
     finally:
         try: driver.quit()

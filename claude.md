@@ -20,6 +20,11 @@ GEMINI_KEY=AIzaSyDch3A7cNovcocVUBeSBIzngiKDGN9A6UE
 START_ROW=22
 COL_NAME=2, COL_LINK=3, COL_COPY=8, COL_TITLE=9, COL_STATUS=10
 TTS_VOICE=zh-TW-HsiaoChenNeural
+
+# 關鍵字選品（shopee_keyword_scraper_home.py）
+KEYWORD_OUTPUT=D:\Users\user\Desktop\蝦皮影片專案\蝦皮關鍵字選品_2026年4-5月.xlsx
+KEYWORD_TARGET=50
+KEYWORD_MIN_SALES=300
 ```
 
 `.env` 已加入 `.gitignore`，不會被 commit。
@@ -30,6 +35,7 @@ TTS_VOICE=zh-TW-HsiaoChenNeural
 
 | 檔案 | 用途 |
 |------|------|
+| `shopee_keyword_scraper_home.py` | **關鍵字選品主程式**（Skill B），Playwright CDP，自動輪換關鍵字，輸出 Excel |
 | `shopee_video_maker_home3.py` | **抓影片主程式**，undetected_chromedriver，抓評論影片存到 `_clips_XXX/` |
 | `shopee_video_producer.py` | **後製主程式 v2**，讀 clips → resize → 合併 → TTS旁白 + 逐句字幕 + BGM |
 | `clear_status.py` | 清除 Excel 狀態欄（「影片完成」→「clips_ok(3)」），重跑用 |
@@ -148,6 +154,64 @@ content/
 1. 前往 analytics.google.com → 建立資源 → 取得 `G-XXXXXXXXXX`
 2. 編輯 `hugo.toml` 第 8 行：`ID = "G-XXXXXXXXXX"`
 3. `hugo --minify` → `git add -A` → `git commit` → `git push`
+
+---
+
+## 關鍵字選品工作流程（shopee_keyword_scraper_home.py）
+
+```
+前置：
+  1. 關閉所有 Chrome 視窗
+  2. 用 CDP 模式重開 Chrome（或請 Claude 幫開）：
+     powershell -Command "Stop-Process -Name chrome -Force; Start-Sleep 2;
+     Start-Process 'C:\Program Files\Google\Chrome\Application\chrome.exe'
+     -ArgumentList '--remote-debugging-port=9222','--user-data-dir=C:\Users\user\AppData\Local\Google\Chrome\User Data'"
+  3. 登入 affiliate.shopee.tw
+
+執行：
+  python shopee_keyword_scraper_home.py
+  → 自動連 CDP port 9222
+  → 關鍵字隨機順序，每個關鍵字最多 MAX_PER_KW 筆（預設 5）
+  → 排除 product_history.json 中已選過的商品
+  → 過濾有影片 + 有分潤連結
+  → 輸出 Excel（KEYWORD_OUTPUT）
+  → 更新 product_history.json
+```
+
+**Excel 欄位（10欄）：** 編號、品名、分潤連結、價格、分潤率、銷量、對應關鍵字、文案、標題、狀態
+
+**商品不重複機制：**
+- `product_history.json` 記錄每次選到的商品 ID + 日期
+- 每次自動排除已選過的商品
+- 關鍵字隨機順序，每關鍵字上限 `MAX_PER_KW=5` 筆，避免單一品類霸版
+
+**Append 模式（補充用）：**
+- `.env` 設 `KEYWORD_APPEND=1` → 接續寫入現有 Excel，編號自動接續
+- 補完後記得改回 `KEYWORD_APPEND=0`（或移除）
+
+**filter_excel_videos.py（影片數篩選）：**
+- 查每筆商品的影片數，保留 >= MIN_VIDEO_COUNT 的前 KEEP_TOP 筆
+- ⚠️ 目前 api/v4/item/get 只回傳 seller demo 影片（最多 1 支），非評論 clips
+- 0 筆符合時自動保護，不覆寫 Excel
+
+---
+
+## 2026-04-08 今日進度
+
+### 影片上傳
+- **A52s 批次上傳完成：成功 41 / 失敗 0**
+- Excel：`蝦皮關鍵字選品_2026年3-4月new.xlsx`，第10~50筆
+- 上傳腳本：`shopee_upload_a52s.py --phone a52s`
+
+### 關鍵字選品
+- 跑出 50 筆，存到 `蝦皮關鍵字選品_2026年4-5月.xlsx`
+- `product_history.json` 已記錄 50 筆（下次自動排除）
+- 問題：單一關鍵字（存錢筒/藍芽耳機）抓太多 → 已加 `MAX_PER_KW=5` 修正
+- 明天重跑，清掉 product_history 或用 append 補足
+
+### 待辦（明天）
+- [ ] 重新跑選品（MAX_PER_KW=5 確保多樣性）
+- [ ] 清掉 `product_history.json` 重跑，或 append 補齊 50 筆
 
 ---
 
